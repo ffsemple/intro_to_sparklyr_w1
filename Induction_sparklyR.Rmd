@@ -1,0 +1,179 @@
+---
+title: "Intro_sparklyr"
+author: "Freya"
+date: "2024-11-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Intro to sparklyr
+
+
+```{r}
+library(sparklyr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+```
+
+## Spark 
+
+Spark is used to run data-processing algorithm across a cluster. Normally you would connect to an external cluster. However, you can connect to your machine as if it were a cluster. 
+Allows you to familiarise yourself with spark and sparklyr before using the resources of the cluster. 
+
+
+```{r}
+sc = spark_connect(master = 'local')
+```
+
+Following code will use built in R dataset, and put it into a spark dataframe. 
+
+```{r}
+cars = copy_to(sc, mtcars, overwrite = TRUE)
+```
+
+## Data input / output 
+### write to a csv file 
+This will create a folder in working directory called cars.csv 
+Contains a csv with the cars data in it. 
+```{r}
+spark_write_csv(cars, 'cars.csv')
+```
+
+### Read from a csv file 
+
+```{r}
+spark_read_csv(sc, 'cars.csv') %>%
+head() %>%
+kable()
+```
+
+### Data wrangling 
+
+Use familiar commands from dplyr package (but now they instead connect to Spark and would be run in parallel across the cluster)
+
+#### create a new column
+
+```{r}
+cars = mutate(cars, transmission = ifelse(am == 0, 'automatic', 'manual'))
+
+```
+
+#### Select columns 
+
+```{r}
+select(cars, am, transmission) %>%
+head() %>%
+kable()
+
+```
+
+#### Calculate the mean of each column
+
+```{r}
+summarise_all(cars, mean, na.rm = TRUE) %>%
+kable()
+
+```
+
+
+## Plots 
+
+Perform all data manipulations in Spark, then bring the result back to R using the *collect()* commmand. Finally, we use the regular ggplot package to make the graph. 
+
+```{r}
+# Data manipulations are done first using spark
+car_group = cars %>%
+group_by(cyl) %>%
+summarise(mpg = sum(mpg, na.rm = TRUE)) %>%
+# collect brings the Spark dataframe back to a regular R dataframe
+collect()
+# Now use ggplot on the R dataframe car_group
+ggplot(aes(as.factor(cyl), mpg), data = car_group) +
+geom_col(fill = 'SteelBlue') +
+xlab('Cylinders') +
+coord_flip()
+
+```
+
+## Models 
+
+### OLS 
+Ordinary least squares regression => OLS 
+
+
+```{r}
+ols_model = ml_linear_regression(cars, mpg ~ hp + disp)
+summary(ols_model)
+
+```
+
+### Logistic regression 
+The command *ml_logistic_regression* can be used to train a multinomial model, where the dependent variable has more than two categories. However, it does not report standard deviations of parameter estimates. 
+
+```{r}
+lr_model = ml_logistic_regression(cars, am ~ hp + disp)
+summary(lr_model)
+
+```
+
+The command *ml_generalized_linear_regression* can also be used to train a logistic model with binary
+dependent variable, but dependent variables with more than two categories are not supported!
+However, it does report standard deviations of parameter estimates.
+
+```{r}
+lr_model = ml_generalized_linear_regression(cars, am ~ hp + disp, family = 'binomial')
+summary(lr_model)
+
+```
+
+### Multilayer Perception 
+
+```{r}
+mlp_model = ml_multilayer_perceptron_classifier(
+cars,
+am ~ hp + disp,
+layers = c(2, 8, 8, 2)
+)
+predictions = ml_predict(mlp_model, cars)
+select(predictions, prediction, probability_0, probability_1) %>%
+head() %>%
+kable()
+
+```
+
+### Gradient boosted trees
+Classification trees:
+```{r}
+gbt_model = ml_gradient_boosted_trees(cars, am ~ hp + disp, type = 'classification')
+predictions = ml_predict(gbt_model, cars)
+select(predictions, prediction, probability_0, probability_1) %>%
+head() %>%
+kable()
+```
+
+### Regression trees
+
+```{r}
+gbt_model = ml_gradient_boosted_trees(cars, mpg ~ hp + disp, type = 'regression')
+predictions = ml_predict(gbt_model, cars)
+select(predictions, prediction) %>%
+head() %>%
+kable()
+
+```
+
+### Other models
+Apache Spark supports many other models - I have just chosen a few to look at more closely. I encourage you to explore others! See documentation here: https://spark.apache.org/docs/latest/ml-classificationregression.html
+6
+
+##Disconnecting
+The following code chunk disconnects from the cluster. You should always do this after your job has been
+run.
+```{r}
+spark_disconnect(sc)
+
+```
